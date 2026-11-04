@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0f14">
+  <meta name="description" content="Private, offline-first calisthenics workout tracking based on your established program.">
+  <title>Form · My Calisthenics</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="Primary navigation">
+    <div class="brand"><div class="brand-mark" aria-hidden="true">F<span>·</span></div><div><div class="brand-name">form<span class="brand-dot">.</span></div></div></div>
+    
+    <nav id="main-nav" class="side-nav" aria-label="Main sections">
+      <button class="nav-item active" type="button" data-nav="dashboard" aria-current="page"><span aria-hidden="true">◫</span> Overview</button>
+      <button class="nav-item" type="button" data-nav="workout"><span aria-hidden="true">▤</span> Workout</button>
+      <button class="nav-item" type="button" data-nav="history"><span aria-hidden="true">◷</span> History</button>
+      <button class="nav-item" type="button" data-nav="progress"><span aria-hidden="true">▥</span> Progress</button>
+      <button class="nav-item" type="button" data-nav="settings"><span aria-hidden="true">⚙</span> Data</button>
+    </nav>
+    
+  </aside>
+
+  <div class="content-area">
+    <header class="topbar">
+      <div class="mobile-brand">form<span>.</span></div>
+      <span id="page-crumb" class="breadcrumb">Dashboard</span>
+      <div class="topbar-right"><span id="save-indicator" class="save-indicator" role="status" aria-live="polite">Saved locally</span></div>
+    </header>
+    <nav class="mobile-nav" aria-label="Main sections on small screens">
+      <button type="button" class="active" data-nav="dashboard">Home</button>
+      <button type="button" data-nav="workout">Workout</button>
+      <button type="button" data-nav="history">History</button>
+      <button type="button" data-nav="progress">Progress</button>
+      <button type="button" data-nav="settings">Data</button>
+    </nav>
+    <main id="main-content" tabindex="-1"></main>
+
+  </div>
+</div>
+<div id="alert-region" class="toast-region" role="status" aria-live="polite"></div>
+<div id="modal-layer"></div>
+</body>
+</html>
