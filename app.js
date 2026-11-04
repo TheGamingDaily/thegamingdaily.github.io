@@ -5,7 +5,7 @@
   const STORAGE_KEY = 'form-calisthenics-data-v1';
   const SCHEMA_VERSION = 1;
   const PLAN = {
-    id: 'upper-abs-2026-final', version: 2, title: 'Upper Body + Abs',
+    id: 'upper-abs-2026-final', version: 3, title: 'Upper Body + Abs',
     schedule: 'Wednesday, Friday and Sunday, 5:00–6:00 PM. Football Monday at 9:00 PM; Tuesday, Thursday and Saturday are recovery days from this workout.',
     restBetweenSessions: 'Three nonconsecutive sessions weekly. Return gradually after a training break; adjust if recovery or football performance suffers.',
     warmupMinutes: '5–8 minutes',
@@ -18,7 +18,7 @@
       {id:'pushups',name:'Standard Push-Ups',group:'upper',sets:2,kind:'reps',min:15,max:15,muscles:'Chest, triceps, shoulders',cue:'Maintain a straight body and use controlled movement.'},
       {id:'rows',name:'Seated Towel Isometric Rows',group:'upper',sets:3,kind:'seconds',min:25,max:25,muscles:'Back, biceps',cue:'Sit with knees slightly bent and a towel looped around your feet. Pull your elbows backward while your legs resist. Hold steadily without jerking.'},
       {id:'pike',name:'Pike Push-Ups',group:'upper',sets:2,kind:'reps',min:10,max:10,muscles:'Shoulders, triceps',cue:'Keep your hips raised and lower yourself slowly.'},
-      {id:'snow',name:'Reverse Snow Angels',group:'upper',sets:2,kind:'reps',min:12,max:12,muscles:'Upper-back control, rear shoulders',cue:'Lie face down and move your arms slowly from overhead toward your hips, without excessively arching your back.'},
+      {id:'prone-w',name:'Prone W Raises',group:'upper',sets:2,kind:'reps',min:12,max:12,muscles:'Upper-back control, rear shoulders',cue:'Lie face down with elbows bent and arms in a W. Gently lift your arms, draw your shoulder blades together, and lower with control without arching your back.'},
       {id:'decline',name:'Decline Push-Ups',group:'upper',sets:2,kind:'reps',min:10,max:10,muscles:'Chest, shoulders, triceps',cue:'Use a low, stable surface for your feet. Move with control.'},
       {id:'curls',name:'Towel Biceps Curls',group:'upper',sets:2,kind:'reps',min:15,max:15,muscles:'Biceps',cue:'Use the towel technique with consistent resistance throughout each repetition.'},
       {id:'crunches',name:'Floor Crunches',group:'abs',sets:3,kind:'reps',min:12,max:12,muscles:'Abdominal strength',cue:'Use controlled abdominal flexion; avoid pulling on your neck.'},
@@ -93,6 +93,7 @@
   }
   state=tryLoad();
   let currentTab='dashboard';
+  let programDraft=null;
   let selectedSessionId=null;
   let selectedHistoryId=null;
   let incomingBackup=null;
@@ -100,19 +101,28 @@
   let timerEnd=0, timerInterval=null, timerFinished=false;
   let toastTimeout=null;
   const statusEl=$('#save-indicator');
-  // Upgrade the built-in plan without rewriting any recorded workout snapshots.
-  // Keep the same storage key and data schema so prior records remain available.
-  if(!storageLocked && state.program.id === PLAN.id && state.program.version < PLAN.version){
-    const previousProgram=state.program;
-    state.program=clone(PLAN);
-    if(!save())state.program=previousProgram;
-  }
-  // Recovery of an older backup should also show today's built-in program.
+  // Upgrade only the known built-in exercise. Session snapshots, including active
+  // workouts, remain untouched; other program edits are retained.
   function applyBuiltInUpgrade(){
-    if(state.program.id === PLAN.id && state.program.version < PLAN.version){
-      state.program=clone(PLAN);
-    }
+    if(state.program.id !== PLAN.id || state.program.version >= PLAN.version)return false;
+    const index=state.program.exercises.findIndex(e=>e.id==='snow' && e.name==='Reverse Snow Angels');
+    if(index<0)return false;
+    state.program.exercises[index]=clone(PLAN.exercises.find(e=>e.id==='prone-w'));
+    state.program.version=PLAN.version;
+    return true;
   }
+  if(!storageLocked){
+    const previousProgram=clone(state.program);
+    if(applyBuiltInUpgrade() && !save())state.program=previousProgram;
+  }
+
+  function applyPreferences(){
+    const dark=state.prefs.theme==='dark';
+    document.documentElement.dataset.theme=dark?'dark':'light';
+    document.documentElement.style.colorScheme=dark?'dark':'light';
+    document.body.classList.toggle('hide-optional',state.prefs.optionalText===false);
+  }
+  applyPreferences();
 
   const lastDate = ()=>state.sessions.filter(s=>s.status==='completed').slice().sort((a,b)=>b.date.localeCompare(a.date))[0];
   const activeSession=()=>state.sessions.find(s=>s.status==='active');
@@ -124,7 +134,7 @@
   function save(){
     if(storageLocked){updateStatus(false,'Storage locked');return false;}
     try {localStorage.setItem(STORAGE_KEY,JSON.stringify(state));updateStatus(true);return true;}
-    catch(e){storageError=`Automatic saving failed (${e.name||'storage error'}). Export your data and check browser storage settings.`;updateStatus(false,'Not saved');showToast('Saving failed. Use Export in Settings & data.',true);return false;}
+    catch(e){storageError=`Automatic saving failed (${e.name||'storage error'}). Export your data and check browser storage settings.`;updateStatus(false,'Not saved');showToast('Saving failed. Use Export in Data.',true);return false;}
   }
   function toast(message,error=false){showToast(message,error);}
   function showToast(message,error=false){const region=$('#alert-region');region.innerHTML=`<div class="toast ${error?'error':''}">${escapeHTML(message)}</div>`;clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>{region.replaceChildren();},4200);}
@@ -135,7 +145,8 @@
     return {id:newId(),date:today(),status:'active',startedAt:new Date().toISOString(),finishedAt:null,programSnapshot:clone(state.program),sets,exerciseNotes,sessionNotes:''};
   }
   function nav(tab){
-    if(!['dashboard','workout','history','progress','guide','settings'].includes(tab))return;
+    if(!['dashboard','workout','history','progress','guide','settings','data','plan'].includes(tab))return;
+    if(tab==='plan' && currentTab!=='plan')programDraft=clone(state.program);
     currentTab=tab;
     if(tab==='workout' && !selectedSessionId && activeSession()) selectedSessionId=activeSession().id;
     render();window.scrollTo({top:0,behavior:'auto'});
@@ -144,14 +155,14 @@
     return `<div class="page-top"><div><h1>${escapeHTML(title)}</h1>${subtitle?`<p>${escapeHTML(subtitle)}</p>`:''}</div>${button?`<div class="btn-row">${button}</div>`:''}</div>`;
   }
   function statusNotice(){
-    if(storageLocked)return `<div class="notice danger-notice" role="alert"><strong>Storage recovery mode.</strong> ${escapeHTML(storageError)} New entries are not saved until you address this in Settings & data. <button class="inline-button" data-nav="settings">Recovery options</button></div>`;
-    if(storageError)return `<div class="notice danger-notice" role="alert">${escapeHTML(storageError)} <button class="inline-button" data-nav="settings">Back up</button></div>`;
+    if(storageLocked)return `<div class="notice danger-notice" role="alert"><strong>Storage recovery mode.</strong> ${escapeHTML(storageError)} New entries are not saved until you address this in Data. <button class="inline-button" data-nav="data">Recovery options</button></div>`;
+    if(storageError)return `<div class="notice danger-notice" role="alert">${escapeHTML(storageError)} <button class="inline-button" data-nav="data">Back up</button></div>`;
     return '';
   }
   function render(){
-    document.querySelectorAll('[data-nav]').forEach(el=>{let active=el.dataset.nav===currentTab;el.classList.toggle('active',active);if(el.matches('.nav-item')){if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');}});
-    $('#page-crumb').textContent={dashboard:'Dashboard',workout:'My workout',history:'History',progress:'Progress',guide:'Exercise guide',settings:'Settings & data'}[currentTab];
-    const contents={dashboard:renderDashboard,workout:renderWorkout,history:renderHistory,progress:renderProgress,guide:renderGuide,settings:renderSettings};
+    document.querySelectorAll('[data-nav]').forEach(el=>{let active=el.dataset.nav===currentTab || (currentTab==='plan' && el.dataset.nav==='settings');el.classList.toggle('active',active);if(el.matches('.nav-item')){if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');}});
+    $('#page-crumb').textContent={dashboard:'Dashboard',workout:'My workout',history:'History',progress:'Progress',guide:'Exercise guide',settings:'Settings',data:'Data',plan:'Edit workout'}[currentTab];
+    const contents={dashboard:renderDashboard,workout:renderWorkout,history:renderHistory,progress:renderProgress,guide:renderGuide,settings:renderSettings,data:renderData,plan:renderPlan};
     main.innerHTML=statusNotice()+contents[currentTab]();
     updateTimerUI();
   }
@@ -163,73 +174,113 @@
     const days=[['Mon','Football','21:00'],['Tue','Recovery',''],['Wed','Upper + Abs','17:00'],['Thu','Recovery',''],['Fri','Upper + Abs','17:00'],['Sat','Recovery',''],['Sun','Upper + Abs','17:00']];
     const todayIndex=(new Date().getDay()+6)%7;
     return shellTitle('Overview','')+
-      `<section class="hero"><div><div class="eyebrow">${active?'IN PROGRESS':'YOUR ROUTINE'}</div><h2>${escapeHTML(state.program.title)}</h2><p>Wed · Fri · Sun  /  17:00–18:00</p>${buttonForWorkout()}</div><div class="hero-side"><div class="hero-big">19</div><span>sets / session</span></div></section>
-       <div class="cards three stat-grid"><div class="panel stat-box"><div class="mini-label">Sessions</div><div class="stat-number">${done.length}</div></div><div class="panel stat-box"><div class="mini-label">Last 28 days</div><div class="stat-number">${sessionsSince(28).length}</div></div><div class="panel stat-box"><div class="mini-label">Most recent</div><div class="stat-number" style="font-size:21px">${last?escapeHTML(dayDisplay(last.date)):'—'}</div></div></div>
-       <div class="cards two" style="margin-top:16px"><section class="panel"><h2>This week</h2><div class="week-schedule">${days.map(([day,act,t],i)=>`<div class="week-day ${i===todayIndex?'today':''} ${act==='Recovery'?'recovery':''}"><span class="week-short">${day}</span><strong>${act}</strong><span class="week-clock">${t||'—'}</span></div>`).join('')}</div></section><section class="panel"><div class="section-header compact-header"><h2>Recent workouts</h2><button class="inline-button small" data-nav="history">View all</button></div>${recent.length?`<div class="activity-list">${recent.map(s=>`<div class="activity-row"><div><strong>${escapeHTML(dayDisplay(s.date))}</strong><div class="small muted">${completeCount(s)}/${totalCount(s)} sets</div></div><button class="btn btn-secondary small" data-action="review" data-id="${escapeHTML(s.id)}">View</button></div>`).join('')}</div>`:emptyMarkup('No sessions yet','')}</section></div>`;
+      `<section class="hero"><div><div class="routine-status">${active?'In progress':'Your routine'}</div><h2>${escapeHTML(state.program.title)}</h2><p>Wed, Fri, Sun  /  17:00–18:00</p>${buttonForWorkout()}</div><div class="hero-side"><div class="hero-big">${state.program.exercises.reduce((sum, ex)=>sum+ex.sets,0)}</div><span>sets / session</span></div></section>
+       <div class="cards three stat-grid"><div class="card panel stat-box"><div class="mini-label">Sessions</div><div class="stat-number">${done.length}</div></div><div class="card panel stat-box"><div class="mini-label">Last 28 days</div><div class="stat-number">${sessionsSince(28).length}</div></div><div class="card panel stat-box"><div class="mini-label">Most recent</div><div class="stat-number">${last?escapeHTML(dayDisplay(last.date)):'—'}</div></div></div>
+       <div class="cards two" style="margin-top:16px"><section class="card panel"><h2>This week</h2><div class="week-schedule">${days.map(([day,act,t],i)=>`<div class="week-day ${i===todayIndex?'today':''} ${act==='Recovery'?'recovery':''}"><span class="week-short">${day}</span><strong>${act}</strong><span class="week-clock">${t||'—'}</span></div>`).join('')}</div></section><section class="card panel"><div class="section-header compact-header"><h2>Recent workouts</h2><button class="inline-button small" data-nav="history">View all</button></div>${recent.length?`<div class="activity-list">${recent.map(s=>`<div class="activity-row"><div><strong>${escapeHTML(dayDisplay(s.date))}</strong><div class="small muted">${completeCount(s)}/${totalCount(s)} sets</div></div><button class="btn btn-outline small" data-action="review" data-id="${escapeHTML(s.id)}">View</button></div>`).join('')}</div>`:emptyMarkup('No sessions yet','')}</section></div>`;
   }
-  function emptyMarkup(title,subtitle){return `<div class="empty"><div class="empty-icon" aria-hidden="true">◷</div><h3>${escapeHTML(title)}</h3><p>${escapeHTML(subtitle)}</p></div>`;}
+  function emptyMarkup(title,subtitle){return `<div class="empty"><h3>${escapeHTML(title)}</h3><p>${escapeHTML(subtitle)}</p></div>`;}
   function renderPreview(){
-    const p=state.program,upper=p.exercises.filter(e=>e.group==='upper'),abs=p.exercises.filter(e=>e.group==='abs');
-    return shellTitle('My workout','Wed · Fri · Sun, 17:00–18:00',`<button class="btn btn-primary" type="button" data-action="start" ${storageLocked?'disabled':''}>Start workout</button>`)+
-      `<section class="panel"><details class="compact-details"><summary>Warm-up · ${escapeHTML(p.warmupMinutes)}</summary><p>${escapeHTML(p.warmup.join(' · '))}</p></details></section>
-       <div class="section-header"><h2>Upper body</h2><span class="pill">${escapeHTML(p.restUpperSets)} rest</span></div><div class="exercise-stack">${upper.map((e,i)=>`<article class="panel compact"><div class="exercise-info"><span class="exercise-num">${i+1}</span><div><h3 style="margin:0">${escapeHTML(e.name)}</h3><div class="small muted">${e.sets} × ${escapeHTML(target(e))}</div></div></div><details class="cue-details"><summary>Technique</summary><p>${escapeHTML(e.cue)}</p></details></article>`).join('')}</div>
-       <p class="footnotes">${escapeHTML(p.restUpperSets)} between sets · ${escapeHTML(p.restUpperExercises)} between exercises</p>
-       <div class="section-header"><h2>Abs · 3 rounds</h2><span class="pill">${escapeHTML(p.restAbsRounds)} rest/round</span></div><section class="panel">${abs.map((e,i)=>`<div class="schedule-row"><strong>${i+7}. ${escapeHTML(e.name)}</strong><span>${escapeHTML(target(e))}</span></div>`).join('')}<p class="hint">Back-to-back each round. Rest after both.</p><details class="compact-details"><summary>Cooldown & guidance</summary><p>${escapeHTML(p.cooldown)} ${escapeHTML(p.safety)}</p></details></section>`;
+    const p=state.program;
+    return shellTitle('My workout','Your current plan',`<button class="btn btn-outline" data-nav="plan">Edit workout</button><button class="btn btn-primary" type="button" data-action="start" ${storageLocked?'disabled':''}>Start workout</button>`)+
+      `<section class="card panel"><details class="compact-details"><summary>Warm-up, ${escapeHTML(p.warmupMinutes)}</summary><p>${escapeHTML(p.warmup.join(', '))}</p></details></section>
+      <div class="section-header"><h2>Exercises</h2></div><div class="exercise-stack">${p.exercises.map((e,i)=>`<article class="card panel compact"><div class="exercise-info"><span class="exercise-num">${i+1}</span><div><h3 style="margin:0">${escapeHTML(e.name)}</h3><div class="small muted">${e.sets} ? ${escapeHTML(target(e))}${e.group==='abs'?' per superset':''}</div></div></div><details class="cue-details"><summary>Technique</summary><p>${escapeHTML(e.cue)}</p></details></article>`).join('')}</div>
+      <p class="footnotes">Rest ${escapeHTML(p.restUpperSets)} between upper-body sets, ${escapeHTML(p.restUpperExercises)} between exercises, and ${escapeHTML(p.restAbsRounds)} between ab rounds.</p>`;
   }
   function renderWorkout(){
     const s=selectedSession();if(!s){return renderPreview();}
     const p=s.programSnapshot,done=completeCount(s),total=totalCount(s),percent=Math.round(100*done/total),finished=s.status==='completed';
-    const upper=p.exercises.filter(e=>e.group==='upper'),abs=p.exercises.filter(e=>e.group==='abs');
-    const upperHTML=upper.map((e,i)=>renderExercise(e,s,i)).join('');
-    const absHTML=Array.from({length:3},(_,i)=>renderAbsRound(i,s,abs)).join('');
+    const blocks=[];
+    for(const e of p.exercises){
+      const last=blocks[blocks.length-1];
+      if(e.group==='abs' && last?.group==='abs')last.exercises.push(e);
+      else blocks.push({group:e.group,exercises:[e]});
+    }
+    const workoutHTML=blocks.map(block=>{
+      if(block.group==='upper')return block.exercises.map(e=>renderExercise(e,s,p.exercises.indexOf(e))).join('');
+      const rounds=Math.max(...block.exercises.map(e=>e.sets));
+      return `<div class="section-kicker"><span>Abs superset</span></div><p class="small muted">Complete the exercises in order, then rest ${escapeHTML(p.restAbsRounds)} between rounds.</p>${Array.from({length:rounds},(_,i)=>renderAbsRound(i,s,block.exercises,rounds)).join('')}`;
+    }).join('');
     return shellTitle(finished?'Edit session':'Workout','',`<button class="btn btn-outline" data-action="exit-workout">${finished?'Back to history':'Back to dashboard'}</button>`)+
-    `<div class="session-summary panel"><div class="session-status"><div><span class="pill ${finished?'green':'gold'}">${finished?'Finished':'In progress'}</span> <span class="small muted">${escapeHTML(dayDisplay(s.date))}</span></div><strong id="set-count-label">${done} / ${total} sets completed</strong></div><div class="progress-track" role="progressbar" aria-label="Completed sets" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><div class="progress-fill" style="width:${percent}%"></div></div><div class="input-row" style="margin-top:15px"><label for="session-date" class="field-label" style="margin:0">Session date</label><input type="date" id="session-date" data-session-field="date" value="${escapeHTML(s.date)}" aria-label="Workout date"/></div></div>
-    <div class="session-grid"><div class="exercise-stack"><section class="panel compact"><h3>Warm up · ${escapeHTML(p.warmupMinutes)}</h3><p class="small muted" style="margin:0">${escapeHTML(p.warmup.join(' · '))}.</p></section><div class="section-kicker"><span>01 / UPPER BODY</span></div>${upperHTML}<p class="footnotes">Rest ${escapeHTML(p.restUpperSets)} between sets and ${escapeHTML(p.restUpperExercises)} between exercises.</p><div class="section-kicker"><span>02 / ABS SUPERSET · 3 ROUNDS</span></div><p class="small muted">${escapeHTML(p.absInstructions)}</p>${absHTML}<section class="panel"><h3>Wrap up</h3><p class="small muted">${escapeHTML(p.cooldown)}</p><label class="field-label" for="session-notes">Session notes</label><textarea id="session-notes" data-session-field="sessionNotes" class="text-field note-input" maxlength="5000" placeholder="Technique, how the workout felt, or anything to remember…">${escapeHTML(s.sessionNotes)}</textarea><div class="btn-row" style="margin-top:16px">${finished?`<span class="pill green">Session finished · edits save automatically</span><button class="btn btn-outline" data-action="exit-workout">History</button>`:`<button class="btn btn-primary" data-action="finish">Finish & save workout</button><button class="btn btn-outline" data-action="exit-workout">Save & leave unfinished</button>`}</div></section></div><aside><section class="panel timercard timer-panel"><div class="mini-label">REST TIMER</div><div class="timer-num" id="timer-display">01:00</div><div class="timer-presets"><button class="btn btn-secondary small" data-action="timer-start" data-secs="60">60s</button><button class="btn btn-secondary small" data-action="timer-start" data-secs="90">90s</button><button class="btn btn-secondary small" data-action="timer-start" data-secs="120">120s</button></div><div class="btn-row" style="justify-content:center;margin-top:10px"><button class="btn btn-outline small" data-action="timer-stop">Stop / reset</button></div><div class="timer-note" id="timer-message" role="status" aria-live="polite"></div></section></aside></div>`;
+    `<div class="session-summary panel"><div class="session-status"><div><span class="badge pill ${finished?'green':'gold'}">${finished?'Finished':'In progress'}</span> <span class="small muted">${escapeHTML(dayDisplay(s.date))}</span></div><strong id="set-count-label">${done} / ${total} sets completed</strong></div><div class="progress-track" role="progressbar" aria-label="Completed sets" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><div class="progress-fill" style="width:${percent}%"></div></div><div class="input-row" style="margin-top:15px"><label for="session-date" class="field-label" style="margin:0">Session date</label><input type="date" id="session-date" data-session-field="date" value="${escapeHTML(s.date)}" aria-label="Workout date"/></div></div>
+    <div class="session-grid"><div class="exercise-stack"><section class="card panel compact"><h3>Warm up, ${escapeHTML(p.warmupMinutes)}</h3><p class="small muted" style="margin:0">${escapeHTML(p.warmup.join(', '))}.</p></section>${workoutHTML}<p class="footnotes">Rest ${escapeHTML(p.restUpperSets)} between upper-body sets and ${escapeHTML(p.restUpperExercises)} between exercises.</p><section class="card panel"><h3>Wrap up</h3><p class="small muted">${escapeHTML(p.cooldown)}</p><div class="optional-note"><label class="field-label" for="session-notes">Session notes</label><textarea id="session-notes" data-session-field="sessionNotes" class="textarea text-field note-input" maxlength="5000" placeholder="Technique, how the workout felt, or anything to remember…">${escapeHTML(s.sessionNotes)}</textarea></div><div class="btn-row" style="margin-top:16px">${finished?`<span class="badge pill green">Session finished, edits save automatically</span><button class="btn btn-outline" data-action="exit-workout">History</button>`:`<button class="btn btn-primary" data-action="finish">Finish & save workout</button><button class="btn btn-outline" data-action="exit-workout">Save & leave unfinished</button>`}</div></section></div><aside><section class="card panel timercard timer-panel"><div class="mini-label">Rest timer</div><div class="timer-num" id="timer-display">01:00</div><div class="timer-presets"><button class="btn btn-outline small" data-action="timer-start" data-secs="60">60s</button><button class="btn btn-outline small" data-action="timer-start" data-secs="90">90s</button><button class="btn btn-outline small" data-action="timer-start" data-secs="120">120s</button></div><div class="btn-row" style="justify-content:center;margin-top:10px"><button class="btn btn-outline small" data-action="timer-stop">Stop / reset</button></div><div class="timer-note" id="timer-message" role="status" aria-live="polite"></div></section></aside></div>`;
   }
   function renderExercise(ex,s,i){
     const arr=s.sets[ex.id],done=arr.filter(x=>x.done).length;
-    return `<article class="panel exercise-card ${done===ex.sets?'is-done':''}" data-ex-card="${escapeHTML(ex.id)}"><div class="exercise-head"><div class="exercise-info"><span class="exercise-num">${i+1}</span><div><div class="exercise-name">${escapeHTML(ex.name)}</div><div class="small muted">${ex.sets} × ${escapeHTML(target(ex))}</div></div></div><span class="pill ${done===ex.sets?'green':''}" data-ex-count="${escapeHTML(ex.id)}">${done}/${ex.sets} done</span></div><div class="exercise-content"><p class="exercise-details">${escapeHTML(ex.cue)}</p>${renderSetHeaders(ex)}${arr.map((r,j)=>renderSetLine(ex,r,j)).join('')}<div class="exercise-actions"><label class="small muted" style="flex:1;min-width:170px" for="note-${escapeHTML(ex.id)}">Exercise notes</label><button class="btn btn-secondary small" data-action="mark-exercise" data-ex="${escapeHTML(ex.id)}" type="button">${done===ex.sets?'Unmark all sets':'Mark all sets done'}</button></div><textarea id="note-${escapeHTML(ex.id)}" class="text-field note-input" rows="2" maxlength="3000" data-ex-note="${escapeHTML(ex.id)}" placeholder="Notes (optional)">${escapeHTML(s.exerciseNotes[ex.id])}</textarea></div></article>`;
+    return `<article class="card panel exercise-card ${done===ex.sets?'is-done':''}" data-ex-card="${escapeHTML(ex.id)}"><div class="exercise-head"><div class="exercise-info"><span class="exercise-num">${i+1}</span><div><div class="exercise-name">${escapeHTML(ex.name)}</div><div class="small muted">${ex.sets} × ${escapeHTML(target(ex))}</div></div></div><span class="badge pill ${done===ex.sets?'green':''}" data-ex-count="${escapeHTML(ex.id)}">${done}/${ex.sets} done</span></div><div class="exercise-content"><p class="exercise-details">${escapeHTML(ex.cue)}</p>${renderSetHeaders(ex)}${arr.map((r,j)=>renderSetLine(ex,r,j)).join('')}<div class="exercise-actions"><label class="small muted optional-note" style="flex:1;min-width:170px" for="note-${escapeHTML(ex.id)}">Exercise notes</label><button class="btn btn-outline small" data-action="mark-exercise" data-ex="${escapeHTML(ex.id)}" type="button">${done===ex.sets?'Unmark all sets':'Mark all sets done'}</button></div><textarea id="note-${escapeHTML(ex.id)}" class="textarea text-field note-input optional-note" rows="2" maxlength="3000" data-ex-note="${escapeHTML(ex.id)}" placeholder="Notes (optional)">${escapeHTML(s.exerciseNotes[ex.id])}</textarea></div></article>`;
   }
   function renderSetHeaders(ex){return `<div class="set-labels"><span>Set</span><span>Target</span><span>Actual ${ex.kind==='seconds'?'sec':'reps'}</span><span class="res-label">Resistance (optional)</span><span>Done</span></div>`;}
   function renderSetLine(ex,r,j){
     const key=`data-set-ex="${escapeHTML(ex.id)}" data-set-i="${j}"`;
     const type=ex.kind==='seconds'?'seconds':'reps';
-    return `<div class="set-line"><span>${j+1}</span><span class="set-target">${escapeHTML(target(ex))}</span><input aria-label="${escapeHTML(ex.name)}, set ${j+1}, actual ${ex.kind==='seconds'?'seconds':'repetitions'}" inputmode="numeric" type="number" min="0" max="${type==='seconds'?'36000':'10000'}" step="1" placeholder="—" value="${r[type]===null?'':r[type]}" data-set-field="${type}" ${key}><input class="res-field" aria-label="${escapeHTML(ex.name)}, set ${j+1}, resistance or weight" type="text" maxlength="150" placeholder="Bodyweight" value="${escapeHTML(r.resistance)}" data-set-field="resistance" ${key}><label class="set-completed"><input type="checkbox" class="check-input" aria-label="${escapeHTML(ex.name)}, set ${j+1} completed" data-set-field="done" ${key} ${r.done?'checked':''}></label></div>`;
+    return `<div class="set-line"><span>${j+1}</span><span class="set-target">${escapeHTML(target(ex))}</span><input class="input" aria-label="${escapeHTML(ex.name)}, set ${j+1}, actual ${ex.kind==='seconds'?'seconds':'repetitions'}" inputmode="numeric" type="number" min="0" max="${type==='seconds'?'36000':'10000'}" step="1" placeholder="—" value="${r[type]===null?'':r[type]}" data-set-field="${type}" ${key}><input class="input res-field" aria-label="${escapeHTML(ex.name)}, set ${j+1}, resistance or weight" type="text" maxlength="150" placeholder="Bodyweight" value="${escapeHTML(r.resistance)}" data-set-field="resistance" ${key}><label class="set-completed"><input type="checkbox" class="checkbox check-input" aria-label="${escapeHTML(ex.name)}, set ${j+1} completed" data-set-field="done" ${key} ${r.done?'checked':''}></label></div>`;
   }
-  function renderAbsRound(i,s,abs){
-    return `<article class="panel exercise-card" data-abs-round="${i}"><div class="exercise-head"><div><div class="mini-label">SUPERSET</div><div class="exercise-name">Round ${i+1} of 3</div></div><span class="pill">${i===2?'Final round':'Rest 60–90s afterward'}</span></div><div class="exercise-content">${abs.map((e,j)=>`<div style="margin-bottom:17px"><div class="exercise-info" style="margin-bottom:10px"><span class="exercise-num">${j+7}</span><div><strong>${escapeHTML(e.name)}</strong><div class="small muted">${escapeHTML(e.cue)}</div></div></div>${renderSetHeaders(e)}${renderSetLine(e,s.sets[e.id][i],i)}</div>`).join('')}${i===2?`<div class="divider"></div>${abs.map(e=>`<label class="field-label" for="note-${escapeHTML(e.id)}">${escapeHTML(e.name)} · notes</label><textarea id="note-${escapeHTML(e.id)}" data-ex-note="${escapeHTML(e.id)}" class="text-field note-input" rows="2" maxlength="3000" placeholder="Notes (optional)">${escapeHTML(s.exerciseNotes[e.id])}</textarea>`).join('')}<div class="btn-row" style="margin-top:13px">${abs.map(e=>`<button type="button" class="btn btn-secondary small" data-action="mark-exercise" data-ex="${escapeHTML(e.id)}">${s.sets[e.id].every(r=>r.done)?'Unmark':'Mark'} ${escapeHTML(e.name)} sets</button>`).join('')}</div>`:''}</div></article>`;
+  function renderAbsRound(i,s,abs,rounds){
+    const current=abs.filter(e=>i<e.sets);
+    return `<article class="card panel exercise-card" data-abs-round="${i}"><div class="exercise-head"><div><div class="mini-label">Superset</div><div class="exercise-name">Round ${i+1} of ${rounds}</div></div><span class="badge pill">${i===rounds-1?'Final round':`Rest ${escapeHTML(s.programSnapshot.restAbsRounds)} afterward`}</span></div><div class="exercise-content">${current.map(e=>`<div class="abs-exercise"><div class="exercise-info"><span class="exercise-num">${s.programSnapshot.exercises.indexOf(e)+1}</span><div><strong>${escapeHTML(e.name)}</strong><div class="small muted">${escapeHTML(e.cue)}</div></div></div>${renderSetHeaders(e)}${renderSetLine(e,s.sets[e.id][i],i)}${i===e.sets-1?`<div class="optional-note"><label class="field-label" for="note-${escapeHTML(e.id)}">${escapeHTML(e.name)}, notes</label><textarea id="note-${escapeHTML(e.id)}" data-ex-note="${escapeHTML(e.id)}" class="textarea text-field note-input" rows="2" maxlength="3000" placeholder="Notes (optional)">${escapeHTML(s.exerciseNotes[e.id])}</textarea></div><button type="button" class="btn btn-outline small" data-action="mark-exercise" data-ex="${escapeHTML(e.id)}">${s.sets[e.id].every(r=>r.done)?'Unmark':'Mark'} ${escapeHTML(e.name)} sets</button>`:''}</div>`).join('')}</div></article>`;
   }
   function renderHistory(){
     const sessions=state.sessions.slice().sort((a,b)=>b.date.localeCompare(a.date)||b.startedAt.localeCompare(a.startedAt));
-    return shellTitle('History','')+(sessions.length?`<section class="panel"><div class="history-table-wrap"><table class="history-table"><thead><tr><th>Date</th><th>Status</th><th>Sets logged</th><th>Actions</th></tr></thead><tbody>${sessions.map(s=>`<tr><td><strong>${escapeHTML(dayDisplay(s.date))}</strong><div class="session-id">${escapeHTML(s.programSnapshot.title)}</div></td><td><span class="pill ${s.status==='completed'?'green':'gold'}">${s.status==='completed'?'Finished':'Unfinished'}</span></td><td>${completeCount(s)} / ${totalCount(s)}</td><td class="table-actions"><button class="btn btn-secondary small" data-action="review" data-id="${escapeHTML(s.id)}">Review</button> <button class="btn btn-outline small" data-action="edit-session" data-id="${escapeHTML(s.id)}">${s.status==='active'?'Resume':'Edit'}</button></td></tr>`).join('')}</tbody></table></div></section>`:emptyMarkup('No sessions recorded','Start a workout and your set-by-set results will appear here.'))+ (selectedHistoryId?renderHistoryDetail(state.sessions.find(s=>s.id===selectedHistoryId)):'');
+    return shellTitle('History','')+(sessions.length?`<section class="card panel"><div class="history-table-wrap"><table class="table history-table"><thead><tr><th>Date</th><th>Status</th><th>Sets logged</th><th>Actions</th></tr></thead><tbody>${sessions.map(s=>`<tr><td><strong>${escapeHTML(dayDisplay(s.date))}</strong><div class="session-id">${escapeHTML(s.programSnapshot.title)}</div></td><td><span class="badge pill ${s.status==='completed'?'green':'gold'}">${s.status==='completed'?'Finished':'Unfinished'}</span></td><td>${completeCount(s)} / ${totalCount(s)}</td><td class="table-actions"><button class="btn btn-outline small" data-action="review" data-id="${escapeHTML(s.id)}">Review</button> <button class="btn btn-outline small" data-action="edit-session" data-id="${escapeHTML(s.id)}">${s.status==='active'?'Resume':'Edit'}</button></td></tr>`).join('')}</tbody></table></div></section>`:emptyMarkup('No sessions recorded','Start a workout and your set-by-set results will appear here.'))+ (selectedHistoryId?renderHistoryDetail(state.sessions.find(s=>s.id===selectedHistoryId)):'');
   }
-  function renderHistoryDetail(s){if(!s)return'';return `<section class="panel history-details" style="margin-top:17px"><div class="section-header" style="margin-top:0"><div><div class="eyebrow">SESSION DETAIL</div><h2>${escapeHTML(dayDisplay(s.date))}</h2></div><div class="btn-row"><button class="btn btn-outline small" data-action="edit-session" data-id="${escapeHTML(s.id)}">Edit results</button><button class="btn btn-danger small" data-action="delete-session" data-id="${escapeHTML(s.id)}">Delete session</button></div></div><p class="small muted">${escapeHTML(s.status==='completed'?'Finished workout':'Unfinished workout')} · ${completeCount(s)} of ${totalCount(s)} sets marked done</p><div class="history-table-wrap"><table class="result-table"><thead><tr><th>Exercise</th><th>Set</th><th>Target</th><th>Actual</th><th>Resistance</th><th>Done</th></tr></thead><tbody>${s.programSnapshot.exercises.flatMap(ex=>s.sets[ex.id].map((r,i)=>`<tr><td>${escapeHTML(ex.name)}</td><td>${i+1}</td><td>${escapeHTML(target(ex))}</td><td>${r[ex.kind]==null?'—':`${r[ex.kind]} ${ex.kind==='seconds'?'sec':'reps'}`}</td><td>${escapeHTML(r.resistance||'—')}</td><td>${r.done?'Yes':'No'}</td></tr>`)).join('')}</tbody></table></div>${s.sessionNotes?`<p><strong>Session notes:</strong> ${escapeHTML(s.sessionNotes)}</p>`:''}${s.programSnapshot.exercises.filter(ex=>s.exerciseNotes[ex.id]).map(ex=>`<p class="small"><strong>${escapeHTML(ex.name)}:</strong> ${escapeHTML(s.exerciseNotes[ex.id])}</p>`).join('')}</section>`;}
+  function renderHistoryDetail(s){if(!s)return'';return `<section class="card panel history-details" style="margin-top:17px"><div class="section-header" style="margin-top:0"><div><h2>${escapeHTML(dayDisplay(s.date))}</h2></div><div class="btn-row"><button class="btn btn-outline small" data-action="edit-session" data-id="${escapeHTML(s.id)}">Edit results</button><button class="btn btn-danger small" data-action="delete-session" data-id="${escapeHTML(s.id)}">Delete session</button></div></div><p class="small muted">${escapeHTML(s.status==='completed'?'Finished workout':'Unfinished workout')}, ${completeCount(s)} of ${totalCount(s)} sets marked done</p><div class="history-table-wrap"><table class="table result-table"><thead><tr><th>Exercise</th><th>Set</th><th>Target</th><th>Actual</th><th>Resistance</th><th>Done</th></tr></thead><tbody>${s.programSnapshot.exercises.flatMap(ex=>s.sets[ex.id].map((r,i)=>`<tr><td>${escapeHTML(ex.name)}</td><td>${i+1}</td><td>${escapeHTML(target(ex))}</td><td>${r[ex.kind]==null?'—':`${r[ex.kind]} ${ex.kind==='seconds'?'sec':'reps'}`}</td><td>${escapeHTML(r.resistance||'—')}</td><td>${r.done?'Yes':'No'}</td></tr>`)).join('')}</tbody></table></div>${s.sessionNotes?`<p><strong>Session notes:</strong> ${escapeHTML(s.sessionNotes)}</p>`:''}${s.programSnapshot.exercises.filter(ex=>s.exerciseNotes[ex.id]).map(ex=>`<p class="small"><strong>${escapeHTML(ex.name)}:</strong> ${escapeHTML(s.exerciseNotes[ex.id])}</p>`).join('')}</section>`;}
   function monday(date){const d=new Date(date);d.setHours(12,0,0,0);const dow=(d.getDay()+6)%7;d.setDate(d.getDate()-dow);return d;}
   function renderProgress(){
     const sessions=completedSessions();const weeks=[];const thisMon=monday(new Date());
     for(let i=5;i>=0;i--){let start=new Date(thisMon);start.setDate(start.getDate()-7*i);let end=new Date(start);end.setDate(end.getDate()+7);weeks.push({start,end,label:new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'}).format(start),count:sessions.filter(s=>asDate(s.date)>=start&&asDate(s.date)<end).length});}
     const max=Math.max(2,...weeks.map(w=>w.count));
-    const exRows=state.program.exercises.map(e=>{
+    const progressExercises=[...state.program.exercises];
+    for(const session of sessions) for(const ex of session.programSnapshot.exercises) if(!progressExercises.some(e=>e.id===ex.id && e.kind===ex.kind)) progressExercises.push(ex);
+    const exRows=progressExercises.map(e=>{
       const matches=sessions.filter(s=>s.sets[e.id]&&s.programSnapshot.exercises.some(x=>x.id===e.id&&x.kind===e.kind));
       const logged=matches.map(s=>({date:s.date,values:s.sets[e.id].filter(r=>r.done&&r[e.kind]!==null).map(r=>r[e.kind]),resistances:s.sets[e.id].filter(r=>r.done&&r.resistance).map(r=>r.resistance)})).filter(x=>x.values.length);
       const first=logged.length?logged[logged.length-1]:null,last=logged[0]||null;
       const best=logged.flatMap(x=>x.values);return {e,first,last,best:best.length?Math.max(...best):null};
     });
     return shellTitle('Progress','')+
-      `<div class="cards three"><div class="panel stat-box"><div class="mini-label">Completed sessions</div><div class="stat-number">${sessions.length}</div><div class="stat-label">Since you began logging</div></div><div class="panel stat-box"><div class="mini-label">Last 28 days</div><div class="stat-number">${sessionsSince(28).length}</div><div class="stat-label">Workouts completed</div></div><div class="panel stat-box"><div class="mini-label">Recorded sets</div><div class="stat-number">${sessions.reduce((a,s)=>a+completeCount(s),0)}</div><div class="stat-label">Across finished workouts</div></div></div>
-      <section class="panel" style="margin-top:18px"><h2>Recent consistency</h2><p class="muted small">Completed sessions by week (Monday–Sunday). The current week may be unfinished.</p><div class="week-bars" aria-label="Completed sessions in the last six calendar weeks">${weeks.map((w,i)=>`<div class="week-bar"><span class="bar-value">${w.count}</span><div class="bar" style="height:${Math.max(5,Math.round(w.count/max*115))}px"></div><span class="bar-label">${escapeHTML(w.label)}</span></div>`).join('')}</div></section>
-      <section class="panel" style="margin-top:18px"><h2>Exercise performance</h2><p class="muted small">First and most recent recorded per-set best, plus your highest recorded set. A dash means no actual result was entered.</p><div class="history-table-wrap"><table class="history-table"><thead><tr><th>Exercise</th><th>First logged</th><th>Most recent</th><th>Best recorded set</th></tr></thead><tbody>${exRows.map(({e,first,last,best})=>`<tr><td><strong>${escapeHTML(e.name)}</strong></td><td>${first?Math.max(...first.values):'—'}</td><td>${last?Math.max(...last.values):'—'}</td><td>${best===null?'—':`${best} ${e.kind==='seconds'?'sec':'reps'}`}</td></tr>`).join('')}</tbody></table></div><p class="hint">Numbers are actual logged results, not prescribed targets. Resistance entries remain in your session history; free-text loads aren't automatically compared.</p></section>`;
+      `<div class="cards three"><div class="card panel stat-box"><div class="mini-label">Completed sessions</div><div class="stat-number">${sessions.length}</div><div class="stat-label">Since you began logging</div></div><div class="card panel stat-box"><div class="mini-label">Last 28 days</div><div class="stat-number">${sessionsSince(28).length}</div><div class="stat-label">Workouts completed</div></div><div class="card panel stat-box"><div class="mini-label">Recorded sets</div><div class="stat-number">${sessions.reduce((a,s)=>a+completeCount(s),0)}</div><div class="stat-label">Across finished workouts</div></div></div>
+      <section class="card panel" style="margin-top:18px"><h2>Recent consistency</h2><p class="muted small">Completed sessions by week (Monday–Sunday). The current week may be unfinished.</p><div class="week-bars" aria-label="Completed sessions in the last six calendar weeks">${weeks.map((w,i)=>`<div class="week-bar"><span class="bar-value">${w.count}</span><div class="bar" style="height:${Math.max(5,Math.round(w.count/max*115))}px"></div><span class="bar-label">${escapeHTML(w.label)}</span></div>`).join('')}</div></section>
+      <section class="card panel" style="margin-top:18px"><h2>Exercise performance</h2><p class="muted small">First and most recent recorded per-set best, plus your highest recorded set. A dash means no actual result was entered.</p><div class="history-table-wrap"><table class="table history-table"><thead><tr><th>Exercise</th><th>First logged</th><th>Most recent</th><th>Best recorded set</th></tr></thead><tbody>${exRows.map(({e,first,last,best})=>`<tr><td><strong>${escapeHTML(e.name)}</strong></td><td>${first?Math.max(...first.values):'—'}</td><td>${last?Math.max(...last.values):'—'}</td><td>${best===null?'—':`${best} ${e.kind==='seconds'?'sec':'reps'}`}</td></tr>`).join('')}</tbody></table></div><p class="hint">Numbers are actual logged results, not prescribed targets. Resistance entries remain in your session history; free-text loads aren't automatically compared.</p></section>`;
   }
-  function renderGuide(){const p=state.program;return shellTitle('Exercise guide','Technique notes and program instructions from your agreed workout.')+
-    `<section class="panel"><h2>How to follow your week</h2><p>${escapeHTML(p.schedule)} ${escapeHTML(p.restBetweenSessions)}</p><p class="small muted">${escapeHTML(p.context)}</p><div class="tip-grid"><div class="callout"><strong>Warm-up · ${escapeHTML(p.warmupMinutes)}</strong><ul class="list-bullets">${p.warmup.map(x=>`<li>${escapeHTML(x)}</li>`).join('')}</ul></div><div class="callout"><strong>Rest & progression</strong><p style="margin-top:8px">Upper sets: ${escapeHTML(p.restUpperSets)}. Between upper exercises: ${escapeHTML(p.restUpperExercises)}. Between ab rounds: ${escapeHTML(p.restAbsRounds)}.</p><p>${escapeHTML(p.progression)}</p></div></div></section>
-    <div class="section-header"><h2>Upper-body exercises</h2></div><div class="guide-list">${p.exercises.filter(x=>x.group==='upper').map((ex,i)=>renderGuideEx(ex,i+1)).join('')}</div><div class="section-header"><h2>Abs · 3-round superset</h2></div><section class="panel" style="margin-bottom:13px"><p style="margin:0">${escapeHTML(p.absInstructions)}</p></section><div class="guide-list">${p.exercises.filter(x=>x.group==='abs').map((ex,i)=>renderGuideEx(ex,i+7)).join('')}</div><section class="panel" style="margin-top:20px"><h3>After the workout</h3><p>${escapeHTML(p.cooldown)}</p><p class="small muted">${escapeHTML(p.safety)} Your towel exercises provide some resistance, but a properly secured pull-up bar would eventually enable more dynamic pulling training.</p></section>`;}
-  function renderGuideEx(e,i){return `<article class="panel guide-item"><div class="exercise-info"><span class="exercise-num">${i}</span><div><h3 style="margin:0">${escapeHTML(e.name)}</h3><div class="small muted">${e.sets} × ${escapeHTML(target(e))} · ${escapeHTML(e.muscles)}</div></div></div><p style="margin:11px 0 0">${escapeHTML(e.cue)}</p></article>`;}
-  function renderSettings(){return shellTitle('Data','')+
-    `<div class="settings-grid"><section class="panel"><div class="eyebrow">BACKUP</div><h2>Export your data</h2><p class="small muted">Downloads your program, every session, all set results, dates, exercise notes, and preferences as a JSON file.</p><button class="btn btn-primary" data-action="export">Export JSON backup</button><p class="hint">Export regularly and keep backups in a safe location separate from this browser.</p></section>
-    <section class="panel"><div class="eyebrow">RESTORE</div><h2>Import a backup</h2><p class="small muted">Checks the file before changes. Merge skips existing session IDs; replace requires explicit confirmation.</p><label class="btn btn-outline" for="import-file" style="cursor:pointer">Choose JSON backup</label><input id="import-file" type="file" accept=".json,application/json" class="file-input" aria-label="Choose workout JSON backup"/><p class="hint">No records are changed just by selecting a file.</p></section>
-    <section class="panel"><div class="eyebrow">STORAGE</div><h2>Where records live</h2><p class="small muted">Saved automatically in this site's browser localStorage.</p><ul class="list-bullets small"><li>Specific to this browser and site origin; does not sync across devices.</li><li>Clearing browser data may erase it; private browsing may not retain it.</li><li>Opening local HTML files directly can have inconsistent storage behavior.</li><li>For dependable use, serve the files from a stable <code>http://localhost</code> address or a trusted HTTPS static host.</li></ul><div class="muted-note">${storageLocked?'Recovery needed — original data is still held in browser storage.':storageError?'Saving error — export a backup and check storage settings.':'Storage appears available; it is not permanent or guaranteed.'}</div></section>
-    <section class="panel"><div class="eyebrow">DANGER ZONE</div><h2>Remove saved records</h2><p class="small muted">Deletion requires confirmation and cannot be undone without a backup.</p>${storageLocked?`<button class="btn btn-outline" data-action="recover-raw">Download unreadable saved data</button><button class="btn btn-danger" style="margin-top:10px" data-action="recover-reset">Clear damaged storage & start fresh</button>`:`<button class="btn btn-danger" data-action="clear-history">Delete workout history</button>`}<p class="hint">You can also delete a single session from its History detail.</p></section></div>
-    <section class="panel" style="margin-top:18px"><div class="eyebrow">PROGRAM INFORMATION</div><h2>Plan preserved</h2><p class="small muted">Wed / Fri / Sun at 17:00. Historic workouts keep their original targets when the plan changes.</p><div class="btn-row"><span class="pill">Program version ${state.program.version}</span><span class="pill">${state.sessions.length} saved session${state.sessions.length===1?'':'s'}</span><span class="pill">Local only</span></div></section>`;}
+  function renderGuide(){const p=state.program;return shellTitle('Exercise guide','Technique notes and program instructions.')+
+    `<section class="card panel"><h2>How to follow your week</h2><p>${escapeHTML(p.schedule)} ${escapeHTML(p.restBetweenSessions)}</p><p class="small muted">${escapeHTML(p.context)}</p><div class="tip-grid"><div class="callout"><strong>Warm-up, ${escapeHTML(p.warmupMinutes)}</strong><ul class="list-bullets">${p.warmup.map(x=>`<li>${escapeHTML(x)}</li>`).join('')}</ul></div><div class="callout"><strong>Rest & progression</strong><p>Upper sets: ${escapeHTML(p.restUpperSets)}. Between upper exercises: ${escapeHTML(p.restUpperExercises)}. Between ab rounds: ${escapeHTML(p.restAbsRounds)}.</p><p>${escapeHTML(p.progression)}</p></div></div></section>
+    <div class="section-header"><h2>Exercises</h2></div><div class="guide-list">${p.exercises.map((ex,i)=>renderGuideEx(ex,i+1)).join('')}</div><section class="card panel" style="margin-top:20px"><h3>After the workout</h3><p>${escapeHTML(p.cooldown)}</p><p class="small muted">${escapeHTML(p.safety)}</p></section>`;}
+  function renderGuideEx(e,i){return `<article class="card panel guide-item"><div class="exercise-info"><span class="exercise-num">${i}</span><div><h3 style="margin:0">${escapeHTML(e.name)}</h3><div class="small muted">${e.sets} × ${escapeHTML(target(e))}, ${escapeHTML(e.muscles)}</div></div></div><p style="margin:11px 0 0">${escapeHTML(e.cue)}</p></article>`;}
+  function renderSettings(){
+    const dark=state.prefs.theme==='dark', optional=state.prefs.optionalText!==false;
+    return shellTitle('Settings','')+`<section class="card panel settings-list"><h2>Preferences</h2>
+      <label class="setting-row"><span><strong>Dark appearance</strong><small>Switch between light and dark.</small></span><input class="toggle" type="checkbox" data-pref="theme" ${dark?'checked':''} ${storageLocked?'disabled':''}></label>
+      <label class="setting-row"><span><strong>Optional text fields</strong><small>Show resistance and workout notes.</small></span><input class="toggle" type="checkbox" data-pref="optionalText" ${optional?'checked':''} ${storageLocked?'disabled':''}></label>
+      <div class="setting-row"><span><strong>Workout plan</strong><small>Change exercises, targets and order for future workouts.</small></span><button class="btn btn-outline" type="button" data-nav="plan" ${storageLocked?'disabled':''}>Edit</button></div>
+      <div class="setting-row"><span><strong>Workout data</strong><small>Back up, restore or manage records.</small></span><button class="btn btn-outline" type="button" data-nav="data">Open</button></div>
+      </section>`;
+  }
+  function renderPlan(){
+    const draft=programDraft||clone(state.program);
+    return shellTitle('Edit workout','Changes apply to future workouts. Active and past sessions keep their original plan.',`<button class="btn btn-outline" type="button" data-nav="settings">Cancel</button>`)+
+      `<form id="plan-form"><div class="plan-list">${draft.exercises.map((e,i)=>`<section class="card panel plan-item" data-draft-index="${i}"><div class="plan-head"><span class="exercise-num">${i+1}</span><strong>${escapeHTML(e.name||'New exercise')}</strong><div class="plan-move"><button type="button" class="btn btn-outline small" data-action="move-exercise" data-index="${i}" data-direction="-1" aria-label="Move ${escapeHTML(e.name)} up" ${i===0?'disabled':''}>Move up</button><button type="button" class="btn btn-outline small" data-action="move-exercise" data-index="${i}" data-direction="1" aria-label="Move ${escapeHTML(e.name)} down" ${i===draft.exercises.length-1?'disabled':''}>Move down</button></div></div>
+      <div class="plan-fields"><label>Name<input class="input" data-draft-field="name" maxlength="150" required value="${escapeHTML(e.name)}"></label><label>Group<select class="select" data-draft-field="group"><option value="upper" ${e.group==='upper'?'selected':''}>Upper body</option><option value="abs" ${e.group==='abs'?'selected':''}>Abs superset</option></select></label><label>Sets<input class="input" data-draft-field="sets" type="number" min="1" max="50" required value="${escapeHTML(e.sets)}"></label><label>Target<input class="input" data-draft-field="target" type="number" min="0" max="10000" required value="${escapeHTML(e.min)}"></label><label>Unit<select class="select" data-draft-field="kind"><option value="reps" ${e.kind==='reps'?'selected':''}>Reps</option><option value="seconds" ${e.kind==='seconds'?'selected':''}>Seconds</option></select></label></div>
+      <label class="plan-cue">Technique (optional)<textarea class="textarea" data-draft-field="cue" maxlength="2000">${escapeHTML(e.cue)}</textarea></label>${e.min!==e.max?`<p class="hint">Current target range: ${escapeHTML(target(e))}. Editing the target sets one value.</p>`:''}<button type="button" class="btn btn-outline small" data-action="remove-exercise" data-index="${i}" ${draft.exercises.length===1?'disabled':''}>Remove exercise</button></section>`).join('')}</div>
+      <div class="plan-actions"><button type="button" class="btn btn-outline" data-action="add-exercise" ${draft.exercises.length>=40?'disabled':''}>Add exercise</button><button class="btn btn-primary" type="submit" ${storageLocked?'disabled':''}>Save workout</button></div></form>`;
+  }
+  function savePlan(){
+    if(storageLocked || !programDraft)return;
+    const updated=clone(programDraft);
+    for(const e of updated.exercises){
+      e.name=e.name.trim(); e.sets=Number(e.sets); e.min=Number(e.min); e.max=Number(e.max);
+      const old=state.program.exercises.find(x=>x.id===e.id);
+      if(old && (old.name!==e.name || old.kind!==e.kind))e.id=newId();
+    }
+    if(updated.exercises.some(e=>!e.name) || !validateProgram(updated)){toast('Check the exercise names, sets and targets.',true);return;}
+    const previous=state.program; state.program=updated;
+    if(!save()){state.program=previous;return;}
+    programDraft=null; nav('settings'); toast('Workout updated for future sessions.');
+  }
+  function renderData(){return shellTitle('Data','')+
+    `<div class="settings-grid"><section class="card panel"><h2>Export your data</h2><p class="small muted">Downloads your program, every session, all set results, dates, exercise notes, and preferences as a JSON file.</p><button class="btn btn-primary" data-action="export">Export JSON backup</button><p class="hint">Export regularly and keep backups in a safe location separate from this browser.</p></section>
+    <section class="card panel"><h2>Import a backup</h2><p class="small muted">Checks the file before changes. Merge skips existing session IDs; replace requires explicit confirmation.</p><label class="btn btn-outline" for="import-file" style="cursor:pointer">Choose JSON backup</label><input id="import-file" type="file" accept=".json,application/json" class="file-input" aria-label="Choose workout JSON backup"/><p class="hint">No records are changed just by selecting a file.</p></section>
+    <section class="card panel"><h2>Where records live</h2><p class="small muted">Saved automatically in this site's browser localStorage.</p><ul class="list-bullets small"><li>Specific to this browser and site origin; does not sync across devices.</li><li>Clearing browser data may erase it; private browsing may not retain it.</li><li>Opening local HTML files directly can have inconsistent storage behavior.</li><li>For dependable use, serve the files from a stable <code>http://localhost</code> address or a trusted HTTPS static host.</li></ul><div class="muted-note">${storageLocked?'Recovery needed — original data is still held in browser storage.':storageError?'Saving error — export a backup and check storage settings.':'Storage appears available; it is not permanent or guaranteed.'}</div></section>
+    <section class="card panel"><h2>Remove saved records</h2><p class="small muted">Deletion requires confirmation and cannot be undone without a backup.</p>${storageLocked?`<button class="btn btn-outline" data-action="recover-raw">Download unreadable saved data</button><button class="btn btn-danger" style="margin-top:10px" data-action="recover-reset">Clear damaged storage & start fresh</button>`:`<button class="btn btn-danger" data-action="clear-history">Delete workout history</button>`}<p class="hint">You can also delete a single session from its History detail.</p></section></div>
+    <section class="card panel" style="margin-top:18px"><h2>Plan preserved</h2><p class="small muted">Wed / Fri / Sun at 17:00. Historic workouts keep their original targets when the plan changes.</p><div class="btn-row"><span class="badge pill">Program version ${state.program.version}</span><span class="badge pill">${state.sessions.length} saved session${state.sessions.length===1?'':'s'}</span><span class="badge pill">Local only</span></div></section>`;}
 
   function updateProgressInTracker(){
     const s=selectedSession();if(!s)return;const done=completeCount(s),total=totalCount(s);
@@ -273,7 +324,7 @@
     const first=$('.modal button');if(first)first.focus();
   }
   function closeModal(){const layer=$('#modal-layer');layer.replaceChildren();incomingBackup=null;modalOpener?.focus();modalOpener=null;}
-  function confirmClear(){openModal('Delete all workout history?',`<p>This permanently deletes <strong>${state.sessions.length} session${state.sessions.length===1?'':'s'}</strong> from this browser. Your workout plan remains. Export a backup first if you may need the records.</p><label for="delete-phrase" class="field-label">Type DELETE to confirm</label><input id="delete-phrase" class="text-field" autocomplete="off" placeholder="DELETE">`,`<button class="btn btn-secondary" data-action="modal-close">Cancel</button><button class="btn btn-danger" data-action="confirm-clear" id="delete-confirm" disabled>Delete history</button>`);}
+  function confirmClear(){openModal('Delete all workout history?',`<p>This permanently deletes <strong>${state.sessions.length} session${state.sessions.length===1?'':'s'}</strong> from this browser. Your workout plan remains. Export a backup first if you may need the records.</p><label for="delete-phrase" class="field-label">Type DELETE to confirm</label><input id="delete-phrase" class="input text-field" autocomplete="off" placeholder="DELETE">`,`<button class="btn btn-outline" data-action="modal-close">Cancel</button><button class="btn btn-danger" data-action="confirm-clear" id="delete-confirm" disabled>Delete history</button>`);}
   async function readImport(input){
     if(!input.files?.length)return;
     const file=input.files[0];input.value='';
@@ -283,7 +334,7 @@
       if(!isObj(parsed)||parsed.format!=='form-calisthenics-backup'||parsed.backupVersion!==1||!validateData(parsed.data))throw new Error('File is not a valid Form v1 JSON backup.');
       incomingBackup=parsed.data;
       const present=new Set(state.sessions.map(s=>s.id));const duplicates=incomingBackup.sessions.filter(s=>present.has(s.id)).length;
-      openModal('Import workout backup',`<p><strong>${incomingBackup.sessions.length}</strong> session${incomingBackup.sessions.length===1?'':'s'} found. <strong>${duplicates}</strong> match existing IDs.</p><p><strong>Merge:</strong> adds ${incomingBackup.sessions.length-duplicates} new sessions and keeps all existing sessions. <strong>Replace:</strong> replaces the entire program and record collection after another confirmation.</p><p class="small muted">${incomingBackup.program.id===state.program.id?'Program ID matches this app.':'The imported program differs from the current one; merging keeps your current program and preserves imported session snapshots.'}</p>`,`<button class="btn btn-secondary" data-action="modal-close">Cancel</button><button class="btn btn-outline" data-action="import-merge" ${storageLocked?'disabled':''}>Merge safely</button><button class="btn btn-danger" data-action="import-replace" ${storageLocked?'disabled':''}>Replace everything</button>`);
+      openModal('Import workout backup',`<p><strong>${incomingBackup.sessions.length}</strong> session${incomingBackup.sessions.length===1?'':'s'} found. <strong>${duplicates}</strong> match existing IDs.</p><p><strong>Merge:</strong> adds ${incomingBackup.sessions.length-duplicates} new sessions and keeps all existing sessions. <strong>Replace:</strong> replaces the entire program and record collection after another confirmation.</p><p class="small muted">${incomingBackup.program.id===state.program.id?'Program ID matches this app.':'The imported program differs from the current one; merging keeps your current program and preserves imported session snapshots.'}</p>`,`<button class="btn btn-outline" data-action="modal-close">Cancel</button><button class="btn btn-outline" data-action="import-merge" ${storageLocked?'disabled':''}>Merge safely</button><button class="btn btn-danger" data-action="import-replace" ${storageLocked?'disabled':''}>Replace everything</button>`);
     }catch(e){toast(`Import rejected: ${e.message}`,true);}
   }
   function applyImport(replace){
@@ -294,7 +345,7 @@
     else state.sessions.push(...clone(incomingBackup.sessions.filter(s=>!oldids.has(s.id))));
     if(!save()){state=old;toast('Import was not applied because storage could not save.',true);return;}
     const imported=replace?state.sessions.length:state.sessions.length-old.sessions.length;
-    closeModal();selectedSessionId=null;selectedHistoryId=null;nav('history');toast(`${replace?'Restored':'Merged'} ${imported} session${imported===1?'':'s'}.`);
+    applyPreferences();closeModal();selectedSessionId=null;selectedHistoryId=null;nav('history');toast(`${replace?'Restored':'Merged'} ${imported} session${imported===1?'':'s'}.`);
   }
   function timerFormat(seconds){return `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;}
   function updateTimerUI(){const display=$('#timer-display'),message=$('#timer-message');if(!display)return;
@@ -306,7 +357,7 @@
   function startTimer(secs){timerFinished=false;timerEnd=Date.now()+secs*1000;clearInterval(timerInterval);updateTimerUI();timerInterval=setInterval(updateTimerUI,250);}
   function stopTimer(){timerEnd=0;timerFinished=false;clearInterval(timerInterval);timerInterval=null;updateTimerUI();}
   function recoverRaw(){try {const raw=localStorage.getItem(STORAGE_KEY);if(!raw)throw new Error('No raw data found.');downloadBlob(new Blob([raw],{type:'application/json'}),`form-unreadable-recovery-${today()}.json`);toast('Recovery copy downloaded.');}catch(e){toast(e.message,true);}}
-  function resetLocked(){openModal('Clear damaged saved data?',`<p>The existing records could not be read. Download a raw recovery copy before clearing them. This action deletes that stored data.</p><label for="delete-phrase" class="field-label">Type DELETE to confirm</label><input id="delete-phrase" class="text-field" autocomplete="off" placeholder="DELETE">`,`<button class="btn btn-secondary" data-action="modal-close">Cancel</button><button class="btn btn-danger" id="delete-confirm" data-action="confirm-recover-reset" disabled>Clear damaged storage</button>`);}
+  function resetLocked(){openModal('Clear damaged saved data?',`<p>The existing records could not be read. Download a raw recovery copy before clearing them. This action deletes that stored data.</p><label for="delete-phrase" class="field-label">Type DELETE to confirm</label><input id="delete-phrase" class="input text-field" autocomplete="off" placeholder="DELETE">`,`<button class="btn btn-outline" data-action="modal-close">Cancel</button><button class="btn btn-danger" id="delete-confirm" data-action="confirm-recover-reset" disabled>Clear damaged storage</button>`);}
   document.addEventListener('click',event=>{
     const navTarget=event.target.closest('[data-nav]');if(navTarget){if(navTarget.dataset.nav==='workout' && selectedSession()?.status==='completed')selectedSessionId=null;nav(navTarget.dataset.nav);return;}
     const b=event.target.closest('[data-action]');if(!b)return;
@@ -321,6 +372,9 @@
     else if(action==='delete-session'){const idx=state.sessions.findIndex(s=>s.id===b.dataset.id);if(idx<0||storageLocked)return;if(window.confirm(`Delete the workout recorded on ${dayDisplay(state.sessions[idx].date)}? This cannot be undone without a backup.`)){const removed=state.sessions.splice(idx,1)[0];if(!save()){state.sessions.splice(idx,0,removed);return;}selectedHistoryId=null;if(selectedSessionId===removed.id)selectedSessionId=null;render();toast('Session deleted.');}}
     else if(action==='timer-start')startTimer(Number(b.dataset.secs));
     else if(action==='timer-stop')stopTimer();
+    else if(action==='add-exercise' && programDraft){if(programDraft.exercises.length<40){programDraft.exercises.push({id:newId(),name:'New exercise',group:'upper',sets:2,kind:'reps',min:12,max:12,muscles:'',cue:''});render();}}
+    else if(action==='remove-exercise' && programDraft){const i=Number(b.dataset.index);if(Number.isInteger(i)&&i>=0&&i<programDraft.exercises.length&&programDraft.exercises.length>1){programDraft.exercises.splice(i,1);render();}}
+    else if(action==='move-exercise' && programDraft){const i=Number(b.dataset.index),to=i+Number(b.dataset.direction);if(Number.isInteger(i)&&to>=0&&to<programDraft.exercises.length){[programDraft.exercises[i],programDraft.exercises[to]]=[programDraft.exercises[to],programDraft.exercises[i]];render();}}
     else if(action==='export')exportData();
     else if(action==='modal-close')closeModal();
     else if(action==='import-merge')applyImport(false);
@@ -333,6 +387,13 @@
   });
   document.addEventListener('input',event=>{
     const el=event.target;if(el.id==='delete-phrase'){$('#delete-confirm').disabled=el.value!=='DELETE';return;}
+    if(el.dataset.draftField && programDraft){
+      const i=Number(el.closest('[data-draft-index]')?.dataset.draftIndex), e=programDraft.exercises[i], field=el.dataset.draftField;
+      if(!e)return;
+      if(field==='target'){e.min=el.value;e.max=el.value;}
+      else if(['name','group','sets','kind','cue'].includes(field))e[field]=el.value;
+      return;
+    }
     if(!el.dataset.setField&&!el.dataset.exNote&&!el.dataset.sessionField)return;
     if(el.dataset.setField){if(el.dataset.setField==='done')return;updateSetField(el);}
     else {const s=selectedSession();if(!s||storageLocked)return;
@@ -343,6 +404,14 @@
   });
   document.addEventListener('change',event=>{
     const el=event.target;
+    if(el.dataset.pref){
+      if(storageLocked)return;
+      const previous=clone(state.prefs);
+      if(el.dataset.pref==='theme')state.prefs.theme=el.checked?'dark':'light';
+      if(el.dataset.pref==='optionalText')state.prefs.optionalText=el.checked;
+      if(!save()){state.prefs=previous;render();return;}
+      applyPreferences();return;
+    }
     if(el.id==='import-file'){readImport(el);return;}
     if(el.dataset.setField==='done'){updateSetField(el);return;}
     if(el.dataset.sessionField==='date'){
@@ -350,6 +419,7 @@
       const s=selectedSession();if(s&&!storageLocked){s.date=el.value;save();const shown=$('.session-summary .session-status .muted');if(shown)shown.textContent=dayDisplay(s.date);}
     }
   });
+  document.addEventListener('submit',event=>{if(event.target.id==='plan-form'){event.preventDefault();if(event.target.reportValidity())savePlan();}});
   document.addEventListener('keydown',event=>{
     const modal=$('.modal');if(!modal)return;
     if(event.key==='Escape'){closeModal();return;}
