@@ -1,1 +1,3 @@
 # thegamingdaily.github.io
+
+Welcome!
